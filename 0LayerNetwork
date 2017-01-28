@@ -1,0 +1,398 @@
+#This gave a max percentage correct of 79-80%, depending on parameters chosen
+#This program was based on a handout from University of Toronto CSC321
+import datetime
+from pylab import *
+from numpy import *
+import matplotlib.pyplot as plt
+import matplotlib.cbook as cbook
+import random
+import math
+
+import time
+from scipy.misc import imread
+from scipy.misc import imresize
+import matplotlib.image as mpimg
+from scipy.ndimage import filters
+import urllib
+from numpy import random
+#import cPickle
+
+import shutil, os
+from scipy.io import loadmat
+from PIL import Image
+#from scipy import ndimage
+from scipy import misc
+from scipy.ndimage import imread
+#from scipy.misc import imread
+import matplotlib.image as mpimg
+import matplotlib.pyplot as plt
+
+
+import _pickle as cPickle
+
+now = datetime.datetime.now()
+#print(now.strftime("%Y-%m-%d %H:%M"))
+currTime = now.strftime("%Y-%m-%d_%H-%M")
+print(currTime)
+
+
+
+
+'''My code'''
+
+'''This code loads the images into a list
+The column headings for the list would be:
+The number label  |   Array for the image.
+For the length of the numberImages previously specified, data is read in 
+for images from labels 0-9
+'''
+def loadData(imageList, numberImages):
+    for image in range(0, numberImages): 
+        for i in range(0, 10):
+            # Load each digit for number i in the sequence of images
+            currentNumber = "train"+str(i)
+            array = np.array(M[currentNumber][image])
+            # Append the number, to use as a label and for error correction
+            dig = currentNumber[len(currentNumber)-1]
+            imageList.append([dig, array])
+    return imageList
+
+# Retrieve the correct label for an image and make into a 10x1 = (10, 1) array
+def getLabelArray(label):
+    labelArray = np.reshape(np.zeros(10), (10, 1))
+    labelArray[label] = 1
+    return labelArray
+
+# Read through a list of test images (ImageList) and calculate the percent correct
+def findPercentCorrect(imageList, layer0Ws, layer0bs):
+    fullResult = 0
+    for n in range(0, len(imageList)):
+        x = imageList[n][1].reshape(784, 1)     # Load the image in the test set
+        finalTest = dot(layer0Ws.T, x)+layer0bs # Guess the image ID using learned parameters
+        finalTestLabel = getLabelArray(imageList[n][0])     # Find the true label for the test data
+        # Find the digits from the arrays
+        result = argmax(finalTest)
+        correct = argmax(finalTestLabel)
+        # Add to the tally of correct results
+        if(result==correct):
+            fullResult += 1
+        elif(result != correct):
+            continue
+    # Calculate the fraction of correct results
+    fractionCorrect = fullResult/len(imageList)
+    
+    return fractionCorrect
+
+
+# Based on the best parameters found (W, b), find what the prototypical numbers look like
+# Just going to print 0-3
+def printPrototype(bestScore, alpha, batchSize, correct):
+    '''What do the filters for #0-3 look like?'''
+    # Use the best paramaters, collected in the bestScore array
+    bestWs = bestScore[1]
+    bestbs = bestScore[2]
+    
+    # Make arrays for each number
+    numberList = [getLabelArray(num) for num in range(0, 10)]
+    
+    # Check what the network thinks different numbers look like
+    #       Plot the Ws
+    count=0
+    for number in numberList:
+        # Construct the image from the output
+        filterNumber = dot(bestWs, number-bestbs)
+        filterImage = filterNumber.reshape(28, 28)
+        plt.imshow(filterImage, interpolation='nearest')
+        cb = plt.colorbar()         # Add figure legend
+        cb.set_label('mean value')
+        figName = "Fig"+str(count) +"_max_Corr"+str(correct) +"_Alpha"+str(alpha) +"B"+str(batchSize) +currTime+".png"
+        savefig(figName, bbox_inches='tight')
+        shutil.move(figName, newFolder)
+        #plt.show()
+        plt.clf()                       # Clear the figure to enable loading of next one
+        count+=1
+
+def plotLearning(allScores, allCost, alpha, batchSize):
+    # Plot the learning rate
+    # Fraction of Correct estimates vs Update number (after batch) = iteration
+    correctVupDate = plt.plot(allScores)
+    plt.ylabel('Score (fraction of 1)')
+    plt.xlabel('Update number (iteration)')
+    #plt.show()
+    plotScore = "Correct_vs_update_apha"+str(alpha) +"B"+str(batchSize) +"_best"+str(max(allScores))+currTime +".png"
+    
+    savefig(plotScore, bbox_inches='tight')
+    plt.clf() 
+    shutil.move(plotScore, newFolder)   #Let's tidy up and put this plot into a folder
+
+    # Plot the learning rate
+    # Fraction of Correct estimates vs Update number (after batch) = iteration
+    costVupDate = plt.plot(allScores)
+    plt.ylabel('Cost')
+    plt.xlabel('Update number (iteration)')
+    #plt.show()
+    plotCost = "Cost_vs_update"+str(alpha) +"B"+str(batchSize) +"_best"+str(max(allCost)) +currTime+".png"
+
+    savefig(plotCost, bbox_inches='tight')
+    plt.clf() 
+    shutil.move(plotCost, newFolder)   #Let's tidy up and put this plot into a folder
+    
+
+
+#################################################################
+
+
+'''Code provided in handout
+    Essentially the equations at the heart of the network'''
+def softmax(y):
+    '''Return the output of the softmax function for the matrix of output y. y
+    is an NxM matrix where N is the number of outputs for a single case, and M
+    is the number of cases'''
+    return exp(y)/tile(sum(exp(y),0), (len(y),1))
+    
+def tanh_layer(y, W, b):    
+    '''Return the output of a tanh layer for the input matrix y. y
+    is an NxM matrix where N is the number of inputs for a single case, and M
+    is the number of cases'''
+    #y = y.reshape(784, 1)
+    return tanh(dot(W.T, y)+b)
+
+def forward(x, layer0Ws, layer0bs):
+    rawOut = tanh_layer(x, layer0Ws, layer0bs)    
+    output = softmax(rawOut)
+    return output, rawOut
+    
+def cost(y, y_):
+    return -sum(y_*log(y)) 
+
+
+
+
+#################################################################
+
+'''The main function for training the network'''
+def TrainNetwork(alpha, batchSize, maxIterate):
+    
+    # Make up the arrays of Ws for each pixel 
+    layer0Ws = np.random.random((784, 10))
+    layer0WsLast = np.random.random((784, 10))
+    #layer0Ws = np.zeros((784, 10))
+    
+    # Here's the bs
+    layer0bs = np.random.random((10, 1))
+    #layer0bs = np.zeros((10, 1))
+
+    bestScore = [0, np.zeros((784, 10)), np.zeros((10, 1))] # Insert the best parameters in here (layer0Ws, layer0bs)
+    allScores = [0] # Keep a record of scores to date, use this to find the best one and record its parameters
+    
+    counter = 1
+    converged  = False
+    # While not converged:
+    # Compute gradients for training samples
+    gradbRaw = 0
+    gradWRaw = 0
+    totCost = 0
+    avgCost = 50
+    iterate = 0    
+
+    while(avgCost>0.01 and iterate<maxIterate):
+        
+        totCost = 0               
+        n=0
+        for m in range(0, batchSize):
+            '''if(iterate<20 or iterate>40):
+                x = imageList[n][1].reshape(1, 784)
+            else:
+                x = imageList[n][1].reshape(1, 784)
+                np.fliplr(x)'''
+            
+            x = imageList[n][1].reshape(1, 784)
+                            
+            output, preSoftOutput = forward(x.T, layer0Ws, layer0bs)
+    
+            labelArray = getLabelArray(imageList[n][0])
+            currCost = cost(output, labelArray)
+            x1 = x.reshape(784, 1)    
+    
+            # Update the gradient calculations
+            gradbRaw += output - labelArray
+            gradWRaw += (output - labelArray)*x
+            
+            totCost += currCost
+            n+=1
+        
+        tempb = layer0bs - alpha*gradbRaw/batchSize
+        #print("tempb: "+ str(tempb))
+        layer0bs = tempb
+        #print("Iteration: "+str(iterate)+" B values - "+str(layer0bs))
+        tempW = layer0Ws - alpha*gradWRaw.T/batchSize
+        layer0Ws = tempW
+        correct = findPercentCorrect(testList, layer0Ws, layer0bs)        
+        outFile.write(str(alpha) +'\t'+str(batchSize) +'\t'+str(iterate) +'\t'+str(avgCost) + '\t'+str(correct)+ "\n")
+         
+        #n += batchSize
+            
+        #Determine the average cost for the batch
+        avgCost = totCost/batchSize
+        allCost.append(avgCost)
+        
+        #Find the percent correct from the test set based on the current parameters
+        correct = findPercentCorrect(testList, layer0Ws, layer0bs) 
+        
+        #If the current parameters give the best score so far, save them
+        #       !!!But first make sure that the list of scores is not empty!
+        if(not allScores):
+            topScore = 0
+        else:
+            topScore = max(allScores)
+ 
+        if(correct>topScore):
+            bestScore = [correct, layer0Ws, layer0bs]
+
+        
+        
+        
+        allScores.append(correct)
+        print(str(iterate)+": Current Score: "+str(correct)+" Max score: "+str(topScore))
+
+        
+        outFile.write(str(alpha)+'\t'+str(batchSize)+'\t'+str(iterate)+'\t'+str(avgCost)+ '\t'+str(correct)+ "\n")
+        iterate += 1
+        random.shuffle(imageList)
+        
+    if(iterate==40): layer0Ws=layer0Ws/1000     # Just to re-kickstart learning    
+    
+    return layer0Ws, layer0bs, bestScore, allScores
+
+        
+
+#################################################################
+
+'''MAIN PROGRAM
+    First set up lists, variables and parameters
+    '''
+batches = []    # List to keep track of the batch sizes tested
+averageScores = []
+avgAlphas = [] 
+allCost = []
+
+#Test several alphas
+alphas = [0.0001, 0.001, 0.01]
+
+minIterate = 100 
+maxIterate = 100   
+batchSizeMin = 55       # Smallest batch size to test   
+batchSizeLimit = 55+1   # Largest batch size to test
+batchSizeIncrement = 2  # Test numbers between smallest and largest batch sizes incremented by this number
+
+alphaMultiple1 = 5
+alphaModIter1 = 100
+
+
+
+
+'''Set up the input
+    Load the MNIST digit data'''
+M = loadmat("mnist_all.mat")
+examplePic = M["train5"][148:149].T   
+
+
+'''Set the number of Images to train with'''
+numberImages = 800
+imageList = []
+
+imageList = loadData(imageList, numberImages)
+
+
+'''Set the number of test images'''
+numberTestImages = 100 
+testList = []
+
+testList = loadData(testList, numberImages)
+   
+print("The length of imageList is: "+str(len(imageList)))
+print("The length of testList is: "+str(len(testList)))
+
+
+
+
+'''Set up the output
+    Write into a new file directory
+    The name of the directory is based on the time'''
+# Current directory
+fileDir = os.path.dirname('__file__')
+# Outpt folder for current run
+newFolder = "Run - "+currTime
+if not os.path.exists(newFolder):
+    os.mkdir(newFolder)
+
+# Write the results in an output file
+fullResults = "NeuralNetResults"+currTime
+outFile = open(fullResults, 'w')
+# Let's add headers to the output file
+outFile.write("Alpha"+'\t'+"Batch size"+'\t'+"Iteration number"+'\t'+"Current cost"+'\t'+"Fraction correct"+'\n')
+
+# Ensure that whole, rather than truncated arrays are printed into the output files
+# This way they can be retained for use in the future
+np.set_printoptions(threshold=np.inf)
+
+
+'''Here is MAIN program'''
+print("")
+# OUTER LOOP:
+# Use this to test different iteration numbers (epochs)
+for currIter in range(minIterate, maxIterate+20, 20):
+    print("Current iteration number: "+str(currIter))
+    
+    # INNER LOOP1:
+    # Use this to iterate through different alphas
+    for alpha in alphas:
+            
+        print("Current iteration is: "+str(currIter))
+        print("Current alpha is: "+str(alpha))
+        
+        # INNER LOOP2:
+        # Use this to iterate through different batch sizes
+        batchAccuracy = []
+        for batchSize in range(batchSizeMin, batchSizeLimit, batchSizeIncrement):
+            print("-->Current batch size is: "+str(batchSize))
+            
+            # Train the network
+            layer0Ws, layer0bs, bestScore, allScores = TrainNetwork(alpha, batchSize, currIter)
+            # Find how accurate the learned parameters (Ws, b's) are
+            correct = findPercentCorrect(testList, layer0Ws, layer0bs)
+            print("-->Correct for this batch size: "+str(correct))            
+                        
+            batches.append(batchSize)               # What batch sizes were tested?
+            batchAccuracy.append(bestScore[0])      # Record the accuracy for this batch
+            
+            #Save learning curves and prototypical numbers into files
+            printPrototype(bestScore, alpha, batchSize, correct)
+            plotLearning(allScores, allCost, alpha, batchSize)
+                    
+        
+        '''Print out a summary to the Terminal, just for feedback and 
+        to make yourself feel fuzzy after running the program'''     
+        #Sum of squares calculation for batch accuracy
+        print("")
+        
+        print("Best batch Accuracy is: "+ str(batchAccuracy))
+        print("")
+        totSumSq = 0    
+    
+        print("Max percentage correct: "+str(bestScore[0]))
+
+        print("")
+        print("THe time is: "+now.strftime("%Y-%m-%d %H:%M"))
+        print("")
+        
+        #Write out the best parameters for current alpha and batch
+        bestParamFile = "BestParams_alpha"+str(alpha)+"_batch"+str(batchSize)+"_"+str(currTime)+".txt"
+        bestParam = open(bestParamFile, 'w')     
+        bestParam.write(str(bestScore))
+        shutil.move(bestParamFile, newFolder)       # Tidy these into a new folder
+
+shutil.move(fullResults, newFolder) # Tidy the the final file containing raw data from learning
+
+bestParam.close()
+outFile.close()
